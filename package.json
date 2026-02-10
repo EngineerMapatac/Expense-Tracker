@@ -1,0 +1,40 @@
+{
+  "name": "budget-tracker",
+  "version": "1.1.0",
+  "description": "Modern budget tracker web app with smart expense categorization",
+  "author": "John Mapatac",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/budget-tracker.git"
+  },
+  "keywords": [
+    "budget",
+    "expense-tracker",
+    "personal-finance",
+    "vanilla-javascript"
+  ],
+  "scripts": {
+    "commit": "cz",
+    "release": "standard-version",
+    "lint:commit": "commitlint --from=HEAD~1"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^18.4.4",
+    "@commitlint/config-conventional": "^18.4.4",
+    "commitizen": "^4.3.0",
+    "cz-conventional-changelog": "^3.3.0",
+    "husky": "^8.0.3",
+    "standard-version": "^9.5.0"
+  },
+  "config": {
+    "commitizen": {
+      "path": "./node_modules/cz-conventional-changelog"
+    }
+  },
+  "husky": {
+    "hooks": {
+      "commit-msg": "commitlint -E HUSKY_GIT_PARAMS"
+    }
+  }
+}
