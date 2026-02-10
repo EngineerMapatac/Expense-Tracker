@@ -1,4 +1,4 @@
-[Uploading README (1).md…]()
+
 # 💰 Budget Tracker Web App (MVP)
 
 A modern, responsive personal budget and expense tracking system designed to help users monitor their income and expenses in a simple, intuitive way.
