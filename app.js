@@ -5,41 +5,157 @@
 class StorageService {
     constructor(storageKey = 'budgetTrackerData') {
         this.storageKey = storageKey;
+        this.validateStorageAvailability();
     }
 
-    // Get all data
+    /**
+     * Check if localStorage is available and working
+     */
+    validateStorageAvailability() {
+        try {
+            const test = '__storage_test__';
+            localStorage.setItem(test, test);
+            localStorage.removeItem(test);
+            return true;
+        } catch (error) {
+            console.error('LocalStorage is not available:', error);
+            alert('Warning: Your browser storage is not available. Data will not be saved.');
+            return false;
+        }
+    }
+
+    /**
+     * Get all data from storage
+     * @returns {Object} Budget tracker data
+     */
     getData() {
         try {
             const data = localStorage.getItem(this.storageKey);
-            return data ? JSON.parse(data) : this.getDefaultData();
+            if (!data) {
+                return this.getDefaultData();
+            }
+            
+            const parsed = JSON.parse(data);
+            
+            // Validate data structure
+            if (!this.validateDataStructure(parsed)) {
+                console.warn('Invalid data structure detected. Resetting to defaults.');
+                return this.getDefaultData();
+            }
+            
+            return parsed;
         } catch (error) {
             console.error('Error reading from storage:', error);
             return this.getDefaultData();
         }
     }
 
-    // Save all data
+    /**
+     * Save all data to storage
+     * @param {Object} data - Data to save
+     * @returns {boolean} Success status
+     */
     saveData(data) {
         try {
-            localStorage.setItem(this.storageKey, JSON.stringify(data));
+            // Validate before saving
+            if (!this.validateDataStructure(data)) {
+                throw new Error('Invalid data structure');
+            }
+            
+            const serialized = JSON.stringify(data);
+            
+            // Check storage quota
+            if (serialized.length > 5 * 1024 * 1024) { // 5MB limit
+                throw new Error('Data exceeds storage quota');
+            }
+            
+            localStorage.setItem(this.storageKey, serialized);
             return true;
         } catch (error) {
             console.error('Error saving to storage:', error);
+            
+            if (error.name === 'QuotaExceededError') {
+                alert('Storage quota exceeded. Please delete some expenses.');
+            }
+            
             return false;
         }
     }
 
-    // Get default data structure
+    /**
+     * Validate data structure integrity
+     * @param {Object} data - Data to validate
+     * @returns {boolean} Validation result
+     */
+    validateDataStructure(data) {
+        if (!data || typeof data !== 'object') return false;
+        if (!Array.isArray(data.expenses)) return false;
+        if (typeof data.budget !== 'number' || isNaN(data.budget)) return false;
+        
+        // Validate each expense
+        for (const expense of data.expenses) {
+            if (!expense.id || !expense.description || !expense.category || !expense.date) {
+                return false;
+            }
+            if (typeof expense.amount !== 'number' || isNaN(expense.amount)) {
+                return false;
+            }
+        }
+        
+        return true;
+    }
+
+    /**
+     * Get default data structure
+     * @returns {Object} Default data
+     */
     getDefaultData() {
         return {
             budget: 0,
-            expenses: []
+            expenses: [],
+            version: '1.0.0',
+            createdAt: new Date().toISOString()
         };
     }
 
-    // Clear all data
+    /**
+     * Clear all data from storage
+     */
     clearData() {
-        localStorage.removeItem(this.storageKey);
+        try {
+            localStorage.removeItem(this.storageKey);
+            return true;
+        } catch (error) {
+            console.error('Error clearing storage:', error);
+            return false;
+        }
+    }
+
+    /**
+     * Export data as JSON file
+     * @returns {string} JSON string of data
+     */
+    exportData() {
+        const data = this.getData();
+        return JSON.stringify(data, null, 2);
+    }
+
+    /**
+     * Import data from JSON string
+     * @param {string} jsonString - JSON data to import
+     * @returns {boolean} Success status
+     */
+    importData(jsonString) {
+        try {
+            const data = JSON.parse(jsonString);
+            if (this.validateDataStructure(data)) {
+                return this.saveData(data);
+            }
+            throw new Error('Invalid data format');
+        } catch (error) {
+            console.error('Error importing data:', error);
+            return false;
+        }
     }
 }
 
@@ -155,6 +271,81 @@ class ExpenseManager {
     // Get expense by ID
     getExpenseById(id) {
         return this.getAllExpenses().find(exp => exp.id === id);
+    }
+
+    /**
+     * Get expense statistics by category
+     * @returns {Object} Category breakdown with totals and percentages
+     */
+    getCategoryStatistics() {
+        const expenses = this.getAllExpenses();
+        const total = this.getTotalExpenses();
+        const stats = {};
+
+        expenses.forEach(expense => {
+            if (!stats[expense.category]) {
+                stats[expense.category] = {
+                    total: 0,
+                    count: 0,
+                    percentage: 0
+                };
+            }
+            stats[expense.category].total += parseFloat(expense.amount);
+            stats[expense.category].count += 1;
+        });
+
+        // Calculate percentages
+        Object.keys(stats).forEach(category => {
+            stats[category].percentage = total > 0 
+                ? ((stats[category].total / total) * 100).toFixed(1)
+                : 0;
+        });
+
+        return stats;
+    }
+
+    /**
+     * Get recent expenses
+     * @param {number} limit - Number of expenses to return
+     * @returns {Array} Recent expenses
+     */
+    getRecentExpenses(limit = 5) {
+        return this.getAllExpenses()
+            .sort((a, b) => new Date(b.date) - new Date(a.date))
+            .slice(0, limit);
+    }
+
+    /**
+     * Get expenses for a specific date range
+     * @param {Date} startDate - Start date
+     * @param {Date} endDate - End date
+     * @returns {Array} Filtered expenses
+     */
+    getExpensesByDateRange(startDate, endDate) {
+        return this.getAllExpenses().filter(expense => {
+            const expenseDate = new Date(expense.date);
+            return expenseDate >= startDate && expenseDate <= endDate;
+        });
+    }
+
+    /**
+     * Get average daily spending
+     * @returns {number} Average daily amount
+     */
+    getAverageDailySpending() {
+        const expenses = this.getAllExpenses();
+        if (expenses.length === 0) return 0;
+
+        const today = new Date();
+        const firstExpenseDate = new Date(
+            Math.min(...expenses.map(e => new Date(e.date)))
+        );
+        
+        const daysDiff = Math.max(1, 
+            Math.ceil((today - firstExpenseDate) / (1000 * 60 * 60 * 24))
+        );
+
+        return this.getTotalExpenses() / daysDiff;
     }
 }
 
@@ -343,30 +534,114 @@ class UIManager {
 
     // Show notification (simple version)
     showNotification(message, type = 'success') {
-        // Create notification element
-        const notification = document.createElement('div');
-        notification.style.cssText = `
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            background: ${type === 'success' ? 'var(--color-success)' : 'var(--color-expense)'};
-            color: white;
-            padding: 1rem 1.5rem;
-            border-radius: var(--radius-md);
-            box-shadow: var(--shadow-lg);
-            z-index: 2000;
-            animation: slideIn 0.3s ease;
-            font-weight: 500;
+        // Create toast container if it doesn't exist
+        let container = document.querySelector('.toast-container');
+        if (!container) {
+            container = document.createElement('div');
+            container.className = 'toast-container';
+            document.body.appendChild(container);
+        }
+
+        // Create toast element
+        const toast = document.createElement('div');
+        toast.className = `toast ${type}`;
+        
+        // Icon based on type
+        const icons = {
+            success: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><polyline points="22 4 12 14.01 9 11.01" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+            error: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="12" y1="8" x2="12" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="12" y1="16" x2="12.01" y2="16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+            warning: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="12" y1="9" x2="12" y2="13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="12" y1="17" x2="12.01" y2="17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+        };
+
+        toast.innerHTML = `
+            <div class="toast-icon">${icons[type] || icons.success}</div>
+            <div class="toast-message">${this.escapeHtml(message)}</div>
+            <button class="toast-close" aria-label="Close notification">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path d="M12 4L4 12M4 4L12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+            </button>
         `;
-        notification.textContent = message;
 
-        document.body.appendChild(notification);
+        container.appendChild(toast);
 
-        // Remove after 3 seconds
-        setTimeout(() => {
-            notification.style.animation = 'slideOut 0.3s ease';
-            setTimeout(() => notification.remove(), 300);
-        }, 3000);
+        // Close button handler
+        const closeBtn = toast.querySelector('.toast-close');
+        closeBtn.addEventListener('click', () => this.removeToast(toast));
+
+        // Auto-remove after 4 seconds
+        setTimeout(() => this.removeToast(toast), 4000);
+    }
+
+    // Remove toast notification
+    removeToast(toast) {
+        if (toast && !toast.classList.contains('removing')) {
+            toast.classList.add('removing');
+            setTimeout(() => {
+                if (toast.parentNode) {
+                    toast.parentNode.removeChild(toast);
+                }
+            }, 300);
+        }
+    }
+
+    // Show loading state on button
+    setButtonLoading(button, isLoading) {
+        if (isLoading) {
+            button.disabled = true;
+            button.classList.add('loading');
+        } else {
+            button.disabled = false;
+            button.classList.remove('loading');
+        }
+    }
+
+    // Validate form field
+    validateField(field, rules = {}) {
+        const value = field.value.trim();
+        const group = field.closest('.form-group');
+        
+        // Remove existing error
+        const existingError = group.querySelector('.error-message');
+        if (existingError) {
+            existingError.remove();
+        }
+        group.classList.remove('error');
+
+        // Required validation
+        if (rules.required && !value) {
+            this.showFieldError(group, 'This field is required');
+            return false;
+        }
+
+        // Min value validation
+        if (rules.min !== undefined && parseFloat(value) < rules.min) {
+            this.showFieldError(group, `Minimum value is ${rules.min}`);
+            return false;
+        }
+
+        // Max value validation
+        if (rules.max !== undefined && parseFloat(value) > rules.max) {
+            this.showFieldError(group, `Maximum value is ${rules.max}`);
+            return false;
+        }
+
+        // Pattern validation
+        if (rules.pattern && !rules.pattern.test(value)) {
+            this.showFieldError(group, rules.message || 'Invalid format');
+            return false;
+        }
+
+        return true;
+    }
+
+    // Show field error
+    showFieldError(group, message) {
+        group.classList.add('error');
+        const error = document.createElement('span');
+        error.className = 'error-message';
+        error.textContent = message;
+        group.appendChild(error);
     }
 }
 
@@ -391,6 +666,62 @@ class App {
         
         // Set today's date as default
         document.getElementById('date').valueAsDate = new Date();
+
+        // Check if first time user
+        this.checkFirstTimeUser();
+
+        // Add performance monitoring
+        this.logPerformanceMetrics();
+    }
+
+    /**
+     * Check if this is the user's first visit
+     */
+    checkFirstTimeUser() {
+        const data = this.storage.getData();
+        const isFirstTime = !localStorage.getItem('budgetTracker_visited');
+        
+        if (isFirstTime) {
+            localStorage.setItem('budgetTracker_visited', 'true');
+            
+            // Show welcome message after a short delay
+            setTimeout(() => {
+                this.showWelcomeMessage();
+            }, 500);
+        }
+    }
+
+    /**
+     * Show welcome message for new users
+     */
+    showWelcomeMessage() {
+        const budget = this.budgetManager.getBudget();
+        
+        if (budget === 0) {
+            this.ui.showNotification(
+                '👋 Welcome! Start by setting your monthly budget.',
+                'success'
+            );
+            
+            // Auto-open budget modal for first-time users
+            setTimeout(() => {
+                this.ui.showBudgetModal(0);
+            }, 2000);
+        }
+    }
+
+    /**
+     * Log performance metrics for optimization
+     */
+    logPerformanceMetrics() {
+        if (window.performance && window.performance.timing) {
+            const perfData = window.performance.timing;
+            const pageLoadTime = perfData.loadEventEnd - perfData.navigationStart;
+            
+            if (pageLoadTime > 0) {
+                console.log(`%c⚡ Page loaded in ${pageLoadTime}ms`, 'color: #6B8E6F; font-weight: bold;');
+            }
+        }
     }
 
     setupEventListeners() {
@@ -426,54 +757,163 @@ class App {
 
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => {
+            // Escape key closes modal
             if (e.key === 'Escape') {
                 this.ui.hideBudgetModal();
+            }
+            
+            // Ctrl/Cmd + B opens budget modal
+            if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+                e.preventDefault();
+                this.ui.showBudgetModal(this.budgetManager.getBudget());
+            }
+            
+            // Ctrl/Cmd + N focuses on expense form
+            if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
+                e.preventDefault();
+                document.getElementById('description').focus();
+            }
+        });
+
+        // Form input validation on blur
+        const formInputs = document.querySelectorAll('#expenseForm input, #expenseForm select');
+        formInputs.forEach(input => {
+            input.addEventListener('blur', () => {
+                if (input.value) {
+                    const rules = { required: true };
+                    if (input.type === 'number') {
+                        rules.min = 0.01;
+                    }
+                    this.ui.validateField(input, rules);
+                }
+            });
+        });
+
+        // Budget form validation
+        this.ui.elements.budgetAmount.addEventListener('blur', () => {
+            if (this.ui.elements.budgetAmount.value) {
+                this.ui.validateField(this.ui.elements.budgetAmount, { 
+                    required: true, 
+                    min: 0 
+                });
+            }
+        });
+
+        // Trap focus in modal when open
+        this.ui.elements.budgetModal.addEventListener('keydown', (e) => {
+            if (!this.ui.elements.budgetModal.classList.contains('active')) return;
+            
+            if (e.key === 'Tab') {
+                const focusableElements = this.ui.elements.budgetModal.querySelectorAll(
+                    'button, input, select, textarea, [tabindex]:not([tabindex="-1"])'
+                );
+                const firstElement = focusableElements[0];
+                const lastElement = focusableElements[focusableElements.length - 1];
+
+                if (e.shiftKey && document.activeElement === firstElement) {
+                    e.preventDefault();
+                    lastElement.focus();
+                } else if (!e.shiftKey && document.activeElement === lastElement) {
+                    e.preventDefault();
+                    firstElement.focus();
+                }
             }
         });
     }
 
     handleBudgetSubmit() {
-        const amount = parseFloat(this.ui.elements.budgetAmount.value);
+        const amountField = this.ui.elements.budgetAmount;
+        const amount = parseFloat(amountField.value);
         
-        if (isNaN(amount) || amount < 0) {
-            this.ui.showNotification('Please enter a valid budget amount', 'error');
+        // Validate amount
+        if (!this.ui.validateField(amountField, { 
+            required: true, 
+            min: 0,
+            max: 999999999
+        })) {
             return;
         }
+        
+        // Show loading state
+        const submitBtn = this.ui.elements.budgetForm.querySelector('button[type="submit"]');
+        this.ui.setButtonLoading(submitBtn, true);
 
-        this.budgetManager.setBudget(amount);
-        this.ui.hideBudgetModal();
-        this.updateUI();
-        this.ui.showNotification('Budget updated successfully!');
+        // Simulate async operation (for future API integration)
+        setTimeout(() => {
+            this.budgetManager.setBudget(amount);
+            this.ui.hideBudgetModal();
+            this.updateUI();
+            this.ui.showNotification('Budget updated successfully!');
+            this.ui.setButtonLoading(submitBtn, false);
+        }, 300);
     }
 
     handleExpenseSubmit() {
-        const formData = {
-            description: document.getElementById('description').value.trim(),
-            amount: document.getElementById('amount').value,
-            category: document.getElementById('category').value,
-            date: document.getElementById('date').value
-        };
+        const descriptionField = document.getElementById('description');
+        const amountField = document.getElementById('amount');
+        const categoryField = document.getElementById('category');
+        const dateField = document.getElementById('date');
 
-        // Validation
-        if (!formData.description || !formData.amount || !formData.category || !formData.date) {
-            this.ui.showNotification('Please fill in all fields', 'error');
+        // Validate all fields
+        const isDescriptionValid = this.ui.validateField(descriptionField, { 
+            required: true 
+        });
+        
+        const isAmountValid = this.ui.validateField(amountField, { 
+            required: true, 
+            min: 0.01,
+            max: 999999999
+        });
+        
+        const isCategoryValid = this.ui.validateField(categoryField, { 
+            required: true 
+        });
+        
+        const isDateValid = this.ui.validateField(dateField, { 
+            required: true 
+        });
+
+        // Stop if any validation failed
+        if (!isDescriptionValid || !isAmountValid || !isCategoryValid || !isDateValid) {
+            this.ui.showNotification('Please correct the errors in the form', 'error');
             return;
         }
 
+        // Collect form data
+        const formData = {
+            description: descriptionField.value.trim(),
+            amount: amountField.value,
+            category: categoryField.value,
+            date: dateField.value
+        };
+
         const editId = this.ui.elements.submitBtn.dataset.editId;
 
-        if (editId) {
-            // Update existing expense
-            this.expenseManager.updateExpense(editId, formData);
-            this.ui.showNotification('Expense updated successfully!');
-        } else {
-            // Add new expense
-            this.expenseManager.addExpense(formData);
-            this.ui.showNotification('Expense added successfully!');
-        }
+        // Show loading state
+        this.ui.setButtonLoading(this.ui.elements.submitBtn, true);
 
-        this.ui.resetExpenseForm();
-        this.updateUI();
+        // Simulate async operation
+        setTimeout(() => {
+            try {
+                if (editId) {
+                    // Update existing expense
+                    this.expenseManager.updateExpense(editId, formData);
+                    this.ui.showNotification('Expense updated successfully!');
+                } else {
+                    // Add new expense
+                    this.expenseManager.addExpense(formData);
+                    this.ui.showNotification('Expense added successfully!');
+                }
+
+                this.ui.resetExpenseForm();
+                this.updateUI();
+            } catch (error) {
+                console.error('Error saving expense:', error);
+                this.ui.showNotification('Failed to save expense. Please try again.', 'error');
+            } finally {
+                this.ui.setButtonLoading(this.ui.elements.submitBtn, false);
+            }
+        }, 300);
     }
 
     editExpense(id) {
